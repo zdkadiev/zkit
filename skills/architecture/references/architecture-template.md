@@ -31,10 +31,28 @@ Technology under the parts (only choices that are expensive to reverse):
 |---|---|---|---|
 | e.g. database engine | … | D-<n> | fits L-4 at 120 EUR/month [R-n](research/R-n-slug.md) |
 
+## Design constraints
+
+Optional. Include this section when other records depend on a designer-chosen bound or rule. Keep each ID as the choice evolves.
+
+| ID | Parameter or rule | Allowed value | Scope | Basis | Applies to | Verification |
+|---|---|---|---|---|---|---|
+| DC-1 | Active registrations | ≤ 16 registrations | Per controller across all ports, at every instant | D-1, bounded storage | B-2, E-1, X-1 | Fill the controller across two ports. Reject the next registration and preserve the existing ones. |
+| DC-2 | Receive-handler allocation | Preallocated memory only | B-2 after initialization, including error handling | D-2, bounded allocation time | B-2, MC-1 | Instrument the handler. Accepted, duplicate and rejected frames each produce zero allocations. |
+
+Use the first column for the ID. The Russian heading is `Проектные ограничения`. The Russian headers are `ID`, `Параметр или правило`, `Допустимое значение`, `Область действия`, `Основание`, `Применяется к` and `Проверка`.
+
+Write exact quantities as `16 registrations` or `= 16 registrations`. Use `<`, `≤`, `>` or `≥` for one-sided bounds (`<=` and `>=` also work). Write a range as `[0, 16) ms`, with a bracket for an included endpoint and a parenthesis for an excluded endpoint. Include the unit and use a decimal point for fractions. For a qualitative rule, describe an observable condition in words. Name the counted population, aggregation boundary and applicable phase or time window in Scope. Basis explains the choice or cites its decision. Applies to names affected record IDs. Verification states an action and an observable result or links its test.
+
+Cite the DC-n in the affected records. Keep imposed constraints under C-n in requirements, the decision history under D-n, workload assumptions under A-n and calculated resource limits under L-n. When a model consumes the bound, use the resource-math skill's verified projection and rerun the calculation after changing the constraint.
+
 ## 4. Parts
-| ID | Part | Responsibility (one sentence) | Owns (E-n, in-process state) | Faces (X-n) | Limits (L-n) | Build / adopt / buy | Serves |
-|---|---|---|---|---|---|---|---|
-| B-1 | … | … | E-1, E-4 | X-1 | L-2 | build | FR-…, NFR-… |
+| ID | Part | Parent | Responsibility (one sentence) | Owns (E-n, in-process state) | Faces (X-n) | Limits (L-n) | Build / adopt / buy | Serves |
+|---|---|---|---|---|---|---|---|---|
+| B-1 | Sampler | — | Publish sensor samples | — | X-1 | L-1 | build | FR-1 |
+| B-2 | Controller | — | Accept readings for active registrations | E-1, E-2, M-1 | — | L-1 | build | FR-1 |
+
+Use the optional `Parent` column for containment across cataloged parts. Give the immediate parent's B-n, or `—` for a top-level part. Keep this hierarchy consistent with the scoped Level 3 view. In `Owns`, include the M-n of a memory region the part owns.
 
 Rules: one reason to change per part; every entity E-n has exactly one owner; every boundary X-n is faced by some part; no part is named after a technology.
 
@@ -48,20 +66,26 @@ People and external systems around the system; external systems carry the contra
 Parts as nodes (`B1["B-1 Name"]`), databases/queues/other infrastructure as extra nodes, arrows labelled with the interface id (`I-1`), external systems with their `X-n`.
 
 ### Level 3 — Components of B-n
-For the one or two parts whose inner structure carries a requirement (isolation, approval, money accounting). Say in one line why this part.
+For the one or two parts whose inner structure carries a requirement (isolation, approval, money accounting). Say in one line why this part. Identify the containing B-n explicitly in the heading or subgraph. Keep links to the part, its interfaces and the related scenario beside the diagram. The flow skill can generate a linked inventory and optional interactive views from the records.
 
 ## 6. Interfaces
-| ID | From → to | What passes and why | Style (sync / async / event) | Delivery semantics | Serves |
-|---|---|---|---|---|---|
-| I-1 | B-… → B-… | … | async | idempotent by action key | FR-… |
+| ID | From → to | What passes and why | Style (sync / async / event) | Protocol | Entity effects | Resources | Delivery semantics | Serves |
+|---|---|---|---|---|---|---|---|---|
+| I-1 | B-1 (publisher) → B-2 (recipient) | Deliver registration ID, sequence and temperature to refresh the display | event | Sensor telemetry v1 over UART | B-2 reads E-1 and updates E-2 on acceptance | M-1, A-1, L-1 | Loss, duplicates and delayed frames are possible | FR-1 |
 
-Operations in words (verb + object, inputs and outputs named in words) where the interface is not obvious. Externally visible operations are in `contracts/` — cite `X-n`, don't repeat. Exact formats come in `mechanics`.
+Give each independently specified exchange one I-n. List additional subscribers to the same contract in the endpoint cell and attribute each effect to its participant. Exchanges between the same parts with different guarantees can have distinct IDs. Describe inputs and outputs in the exchange cell. State the ordering, loss, duplication or completion guarantees that matter in Delivery semantics.
+
+Every row needs `Protocol` and `Entity effects` (Russian headers `Протокол` and `Влияние на сущности`). Name the protocol, version or transport needed for compatibility. For custom frames, in-process calls and human handoffs, describe the agreed convention or link its specification. For each modeled effect, give the participant B-n, operation and E-n. A stateless exchange uses `none` (`нет`). Once a governing mechanism exists, add its MC-n to the effect and put any detailed I-n spec in the mechanics internal-contracts table. Architecture can describe the effect before mechanics exists.
+
+The optional `Resources` column cites affected memory regions M-n and applicable assumptions A-n and limits L-n. Put load, capacity, units and the calculation in resource math. When a modeled resource serves several interfaces, add their IDs to that resource’s CAPACITY entry so the reader shows the combined demand once. External operations link to their X-n record in contracts.
 
 ## 7. Key scenarios
 3-6 walk-throughs, step by step through parts and interfaces. At least one is the main flow and two are failure or hard-requirement flows (restart in the middle of an external action, quota exhausted, a hostile input, a part down, a deletion request reaching every copy).
-| ID | Scenario | Steps (B-/I- ids) | Outcome against requirements | Gaps found |
-|---|---|---|---|---|
-| S-1 | … | B-1 →I-1→ B-2 … | NFR-12 holds because … | none / fixed in B-… |
+| ID | Scenario | Steps (B-/I- ids) | Alternate path | Outcome against requirements | Gaps found |
+|---|---|---|---|---|---|
+| S-1 | Deliver a sample | B-1 → I-1 → B-2 | — | B-2 displays the newest accepted sample for FR-1 | none |
+
+For a sequence view, give each ordered step as sender B-n → I-n → recipient B-n. A chain may continue from the previous recipient. Separate independent complete triples with a semicolon. The optional `Alternate path` holds the complete ordered exchanges for a selected alternate case. Give a distinct failure scenario its own S-n where it has its own outcome. Keep the branching condition and observable outcome with the scenario. Describe an unspecified order in prose until it is known.
 
 ## 8. Cross-cutting concerns
 Security and secrets, reliability and recovery, observability, cost control, data isolation, deployment shape — one short paragraph each, pointing to the parts and requirements that carry it; the depth comes in `resilience`. Skipped ones listed with the reason.

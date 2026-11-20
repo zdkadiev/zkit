@@ -38,6 +38,12 @@ class IdsTest(unittest.TestCase):
         r = run({"requirements.md": REQUIREMENTS, "architecture.md": ARCHITECTURE})
         self.assertEqual(r.returncode, 0, r.stdout)
 
+    def test_optional_design_input_in_model_template_is_not_a_dependency(self):
+        model = (ROOT / "skills/resource-math/references/model-template.py").read_text()
+        result = run({"requirements.md": REQUIREMENTS, "architecture.md": ARCHITECTURE},
+                     extra={"resource-math/model.py": model})
+        self.assertEqual(result.returncode, 0, result.stdout)
+
     def test_dangling_id_fails(self):
         r = run({"requirements.md": REQUIREMENTS, "architecture.md": ARCHITECTURE.replace("FR-1,", "FR-9,")})
         self.assertEqual(r.returncode, 1)

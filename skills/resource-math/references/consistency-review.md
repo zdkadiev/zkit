@@ -11,5 +11,7 @@ Give this to a fresh reviewer sub-agent with the paths of `concept.md`, `require
 7. CONTRADICTION: the math contradicts a requirement, constraint, concept boundary or non-superseded decision, or relies on a superseded one.
 8. DESIGN_LEAK: a decision smuggled in as an assumption (a named provider or product as a choice, a part structure, a data format); products only as sources of numbers.
 9. STALE: assumptions or limits that disagree with the current requirements text (a changed target, a renumbered requirement).
+10. CAPACITY: a throughput comparison mixes workloads, windows or units, presents an estimate as a measurement, or grants every producer the full capacity of a shared resource. Check the cited assumptions and reproduce the aggregate offered load and sustainable throughput from the model. When service capacity is unknown, the comparison should say so.
+11. DESIGN INPUT: where architecture supplies a bound, trace it from the DC-n row into the sizing formula. Check population, scope, units and treatment of inclusive or exclusive endpoints. A pre-architecture estimate should identify its provisional assumption. After the design choice is made, the model should read its current value through `DESIGN_INPUTS`.
 
 Strict but fair; skip nitpicks; «none» for an empty category. The reviewer's table is evidence, not a verdict: the main agent decides each finding.

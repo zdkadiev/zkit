@@ -14,6 +14,7 @@ IDS = {   # prefix: (owner document, what it names)
     "X": ("contracts.md", "external boundary"),
     "E": ("data.md", "entity"), "M": ("data.md", "in-memory state"),
     "B": ("architecture.md", "part"), "I": ("architecture.md", "interface"), "S": ("architecture.md", "scenario"),
+    "DC": ("architecture.md", "design constraint"),
     "MC": ("mechanics.md", "mechanism"),
     "F": ("resilience.md", "failure"), "T": ("resilience.md", "threat"), "O": ("resilience.md", "observability signal"),
     "DR": ("resilience.md", "drill"), "RA": ("resilience.md", "resilience assumption"), "RL": ("resilience.md", "resilience limit"),
@@ -23,15 +24,15 @@ IDS = {   # prefix: (owner document, what it names)
 
 
 def rx(*prefixes, num=r"\d+"):
-    """Regex for ids with these prefixes: rx("FR", "NFR") -> (?:FR|NFR)-\\d+. An unregistered prefix raises."""
+    """Match registered prefixes at a word boundary, including in ranges such as FR-1–FR-3."""
     bad = [p for p in prefixes if p not in IDS]
     if bad: raise KeyError("not in the id registry (flow/scripts/ids.py): " + ", ".join(bad))
-    return "(?:%s)-%s" % ("|".join(prefixes), num)
+    return r"(?<!\w)(?:%s)-%s" % ("|".join(prefixes), num)
 
 
 if __name__ == "__main__":
     import re
-    assert rx("FR", "NFR") == r"(?:FR|NFR)-\d+" and re.fullmatch(rx("B"), "B-12") and not re.fullmatch(rx("B"), "MB-1")
+    assert re.fullmatch(rx("B"), "B-12") and not re.search(rx("C"), "DC-1")
     try: rx("К"); raise SystemExit("unregistered prefix accepted")
     except KeyError: pass
     for p, (own, what) in IDS.items(): print("%-4s %-17s %s" % (p, own, what))

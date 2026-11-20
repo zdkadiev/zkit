@@ -5,6 +5,9 @@ import re, sys, os, importlib.util
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "flow", "scripts"))
 try: from ids import rx
 except ImportError: sys.exit("ERROR: zkit id registry flow/scripts/ids.py not found: run this script from the zkit plugin, not from a copied skill")
+from record_anchors import ID_HEADERS
+
+ROW_HEADERS = ID_HEADERS | {"entity", "сущность"}
 
 d = next((a for a in sys.argv[1:] if not a.startswith("--")), "docs/zkit")
 rdp = lambda n: open(os.path.join(d, n), encoding="utf-8").read() if os.path.exists(os.path.join(d, n)) else None
@@ -26,7 +29,7 @@ def tables(t, idpat):
     for l in t.splitlines():
         if not l.startswith("|"): hdr = None; continue
         c = [x.strip() for x in l.strip().strip("|").split("|")]
-        if c and c[0].lower() in ("id", "entity", "сущность"): hdr = [x.lower() for x in c]; continue
+        if c and c[0].casefold() in ROW_HEADERS: hdr = [x.lower() for x in c]; continue
         if hdr and re.match(idpat, c[0]): rows.append(dict({h: (c[i] if i < len(c) else "") for i, h in enumerate(hdr)}, _id=c[0]))
     return rows
 col = lambda r, pat: next((v for h, v in r.items() if re.search(pat, h)), "")
@@ -37,7 +40,7 @@ if req is not None:
     for l in req.splitlines():
         if not l.startswith("|"): hdr = None; continue
         c = [x.strip() for x in l.strip().strip("|").split("|")]
-        if c and c[0].lower() == "id": hdr = [x.lower() for x in c]; continue
+        if c and c[0].casefold() in ID_HEADERS: hdr = [x.lower() for x in c]; continue
         if hdr and re.match(r"(FR|NFR|C)-\d+$", c[0]):
             i = next((n for n, h in enumerate(hdr) if re.search(r"приоритет|priority", h)), None)
             reqs[c[0]] = (c[i] if i is not None and i < len(c) else "", l)
@@ -50,7 +53,9 @@ if rmp:
     except Exception as e: warn("resource-math/model.py could not be loaded: %s" % str(e)[:60])
 limits = set(re.findall(r"\b" + rx("L") + r"\b", rm)) if rm else set()
 
-E = tables(sec("сущност", "entit", "catalog"), rx("E") + r"$")
+catalog = sec("entity catalog", "catalog of entities", "каталог сущност", "^entities$", "^сущности$")
+if not catalog: catalog = sec("сущност", "entit", "catalog")
+E = tables(catalog, rx("E") + r"$")
 M_ = tables(sec("память", "memory"), rx("M") + r"$")
 LC = tables(sec("жизненн", "lifecycle"), rx("E") + r"$")
 if not E: err("no entity rows (E-n) in the entity catalog")
@@ -76,7 +81,13 @@ for r in E:
         served.add(s)
         if reqs and s not in reqs: err("%s serves %s, which is not in requirements" % (e, s))
     if not re.search(rx("FR", "NFR", "C"), col(r, r"serves|обслужив|требован")): err("%s serves no requirement" % e)
-lc = {r["_id"]: r for r in LC}
+for field in tables(sec("logical fields", "логические поля"), rx("E") + r"$"):
+    if field["_id"] not in seen: err("logical field references %s, which has no catalog entry" % field["_id"])
+lc = {}
+for r in LC:
+    e = r["_id"]
+    if e in lc: err("duplicate lifecycle row %s" % e)
+    else: lc[e] = r
 for r in E:
     e = r["_id"]; sens = col(r, r"sensitiv|чувств").lower()
     if e not in lc: err("%s has no lifecycle row" % e); continue

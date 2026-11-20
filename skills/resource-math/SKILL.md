@@ -54,6 +54,10 @@ List the assumptions (`A-n`) the formulas need - about 15-20, not more: merge in
 ### 4. Build the model
 Copy `references/model-template.py` to `docs/zkit/<project>/resource-math/model.py` and fill it: `ASSUMPTIONS`, `compute()` (plain arithmetic, stdlib, one formula per line with a comment naming the resource), `LIMITS` (every numeric requirement and the budget that the math can test: `req` points to its `NFR-`/`C-` id), optional `UNITS`. Keep it small - a model that needs a manual is a design. Then run `python3 <skill-dir>/scripts/check_resource_math.py <project-dir>` to see the three scenarios and the sensitivity. Sanity-check results against intuition and against any measurement; a surprising number is either a finding or a bug - find out which before showing it.
 
+When a formula uses a numeric architecture choice, declare its DC-n, expected unit and endpoint operator in `DESIGN_INPUTS`. Use `a["DC-n"]` in the formula. Keep the requirement budget in `LIMITS` and workload estimates in `ASSUMPTIONS`. Before architecture exists, size from a documented assumption. When architecture adopts the choice, reconcile its scope and unit, replace the provisional input with the DC reference, and regenerate the results. See [design inputs](references/resource-math-template.md#optional-design-inputs).
+
+For a rate-limited resource or interface, describe comparable demand and sustainable throughput with optional `CAPACITY` entries. Each entry cites results of `compute()`, evidence, the workload window, and any applicable limits. Add I-n/X-n references when the design defines them. Combine all contributors to a shared bottleneck in the model and show that comparison once. With demand alone, the generated table reports **capacity unknown**. See [the capacity example](references/resource-math-template.md#optional-capacity-comparisons).
+
 ### 5. Verdict and consequences
 For every limit: fits / fits with changes / does not fit, in the best, expected and worst scenarios. Then decide:
 - **Fits** in expected and worst: record the margin and the top sensitivities.

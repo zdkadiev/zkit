@@ -15,26 +15,28 @@ The mechanics in ≤5 sentences: how many mechanisms, which are high risk, what 
 ## 2. Mechanisms
 | ID | Part | Mechanism | Kind | Serves | Verified by | Risk |
 |---|---|---|---|---|---|---|
-| MC-1 | B-3 | Quota reservation before a model call | algorithm | NFR-1, L-7 | mechanics/model_quota.py | H |
-| MC-2 | B-3 | Task lifecycle | state machine | FR-8, NFR-12 | review | M |
+| MC-1 | B-2 | Sample acceptance | state machine | FR-1 | review | M |
+| MC-2 | B-3 | Quota reservation before a model call | algorithm | NFR-1, L-7 | mechanics/model_quota.py | H |
 
 `Kind`: state machine / algorithm / protocol / concurrency / timing / memory / format. `Verified by`: an executable model path, `review` (the independent reviewer) or a test idea for the roadmap. `Risk`: H (a violated invariant breaks money, isolation, exactly-once or a deadline) / M / L.
 
-### MC-1 Quota reservation (B-3)
-Purpose and the requirement it serves; the rule in pseudocode or formulas (short); **invariants** (`reserved + spent ≤ quota at every instant`); the interleavings and failures that threaten it; limits from resource-math it must respect; what it needs from interfaces.
+### MC-1 Sample acceptance
+**Owner:** [B-2](architecture.md#B-2) · **Input:** [I-1](architecture.md#I-1) · **Subject:** [E-1 / reading availability](data.md#E-1-reading-availability)
 
-### MC-2 Task lifecycle (B-3)
+One machine instance exists per active registration. Check for a live registration before looking up its [current reading](data.md#E-2) in [M-1](data.md#M-1). Discard frames for retired registrations. Evaluate the guard and apply the effect atomically relative to other samples and registration removal.
+
 | State | Event | Guard | Next state | Effects |
 |---|---|---|---|---|
-| queued (initial) | start | quota reserved | running | emit action key |
-| running | step done | — | running | persist step |
-| running | timeout | no progress for T | failed | release reserve |
-| running | crash / restart | — | queued | resume from last persisted step |
-| running | cancel | — | cancelled | release reserve |
-| failed (final) | — | — | — | — |
-| cancelled (final) | — | — | — | — |
+| awaiting_sample (initial) | sample for this registration | First accepted sample | has_reading | Create E-2 with the received sequence and temperature. |
+| has_reading | sample for this registration | Incoming sequence exceeds stored sequence | has_reading | Update sequence and temperature together. |
+| has_reading | sample for this registration | Incoming sequence is equal to or below stored sequence | has_reading | Discard the frame and preserve the current reading. |
 
-First row is the initial state; terminal states are marked `(final)`; include timeout, crash/restart, duplicate delivery and cancel events where they apply.
+Removal destroys the instance and deletes its E-2. After shutdown a fresh registration begins in `awaiting_sample`. This machine has no timeout. Its final live state can only self-transition, since removal happens outside the machine. Record this boundary when explaining the checker's dead-end and missing-failure-event warnings.
+
+Start each table with its initial state. Mark terminal states with `(final)`. Include timeout, crash/restart, duplicate delivery and cancel events where applicable. A state diagram, when useful, follows the same table and links to this MC-n and the exact entity/aspect. A machine that governs a transient procedure may say so and describe the instance lifetime without naming an entity state.
+
+### MC-2 Quota reservation (B-3)
+Purpose and the requirement it serves, the rule in pseudocode or formulas, **invariants** (`reserved + spent ≤ quota at every instant`), the interleavings and failures that threaten it, limits from resource-math it must respect, and its input interfaces.
 
 ## 3. Trivial parts
 One line per part with no mechanism of its own, saying why: `B-1: a form over the owner API, no state.`

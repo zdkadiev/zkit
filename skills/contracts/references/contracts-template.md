@@ -13,10 +13,12 @@ Aim for one to two pages plus the spec files in `contracts/`. Sections in this o
 The boundaries in ≤5 sentences: how many, which are consumed and which published, which rest on unverified assumptions, the biggest finding.
 
 ## 2. Boundaries
-| ID | Boundary | Direction | Paradigm | Spec | Counterparty | Limits | Verified | Serves |
-|---|---|---|---|---|---|---|---|---|
-| X-1 | owner API | published | HTTP | contracts/x-1-owner-api.yaml | owner's browser client | L-1 | — | FR-1, NFR-4 |
-| X-2 | model provider | consumed | HTTP | contracts/x-2-model-provider.yaml | OpenAI-compatible providers | L-2, L-5 | R-1 | FR-5 |
+| ID | Boundary | Direction | Paradigm | Protocol | Spec | Counterparty | Limits | Verified | Serves |
+|---|---|---|---|---|---|---|---|---|---|
+| X-1 | owner API | published | request/response | HTTPS with JSON, owner API v1 | contracts/x-1-owner-api.yaml | owner's browser client | L-1 | — | FR-1, NFR-4 |
+| X-2 | model provider | consumed | request/response | HTTPS with JSON, provider API v1 | contracts/x-2-model-provider.yaml | OpenAI-compatible providers | L-2, L-5 | R-1 | FR-5 |
+
+`Protocol` identifies the agreed exchange convention for browsing by protocol. Give a version or transport when compatibility depends on it. The Spec path leads to the authoritative contract. Older indexes may give only a Paradigm. When resource math models this boundary’s bottleneck, include the X-n in its CAPACITY entry.
 
 `Direction`: consumed / published. `Verified`: `R-n` (research report) or the documentation link for consumed contracts, `—` for published, `unverified` otherwise. `Limits`: `L-n` of resource-math. `Spec`: path relative to the project folder.
 

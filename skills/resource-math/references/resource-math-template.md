@@ -53,3 +53,42 @@ Date; `check_resource_math.py` result (errors / warnings left and why); verdict 
 ## Sources
 Numbered URLs; delegated findings link to `[R-n]` reports with their confidence.
 ```
+
+### Optional design inputs
+
+For a calculation that reserves storage per registration, declare the registration bound once in the architecture catalog. Give the model its identifier, endpoint operator and unit. This example uses a 64-byte slot.
+
+```python
+DESIGN_INPUTS = {"DC-1": {"op": "<=", "unit": "registrations"}}
+
+def compute(a):
+    return {"slot_memory": a["DC-1"] * 64}
+```
+
+The checker reads the allowed value from `architecture.md` (or the legacy `high-level-design.md`). All scenarios receive the same resolved endpoint. The generated **Design inputs** table links to its declaration. After a catalog edit, run the checker with `--update` to regenerate the results and review the limit verdicts.
+
+Use `=` for an exact value, `<` or `<=` to select an upper endpoint, and `>` or `>=` to select a lower endpoint. The operator must match the endpoint’s inclusivity and the units must match exactly. For an exclusive endpoint, `compute` receives the boundary itself. For example, a discrete count strictly below 10 has a maximum of 9. Express any such conversion in the formula. Qualitative rules belong in the verification of their affected records.
+
+Before architecture exists, models can use `ASSUMPTIONS` directly. To prepare a calculation for a planned constraint, add `"provisional": "A-3"` to its entry and document A-3 with the same unit and its scenario values. Each scenario and sensitivity run then uses that assumption and the report labels the source **Provisional**. Once an architecture document exists, the checker requires the declared DC-n to resolve. Remove a superseded provisional assumption from the model and its assumptions table if it has no further use.
+
+### Optional capacity comparisons
+
+When throughput matters, add `CAPACITY` to the existing model. Its entries identify results of `compute(a)`. The checker generates **Capacity by resource** inside the model block. The design inventory can then display the same figures for each listed interface. A resource can be named before the architecture exists. Add its interface IDs once their owners define them.
+
+```python
+# compute(a) returns arrivals_total and receiver_rate, both in frames/s in UNITS.
+CAPACITY = [{
+    "resource": "B-2 receiver",
+    "interfaces": ["I-1", "I-2"],
+    "demand": {"metric": "arrivals_total", "basis": "estimated", "assumptions": ["A-1", "A-2"]},
+    "capacity": {"metric": "receiver_rate", "basis": "measured", "assumptions": ["A-3"]},
+    "windows": {"expected": "steady operation, 1 s", "worst": "one-second burst"},
+    "limits": ["L-1"],
+}]
+```
+
+- Declare one entry per limiting resource. For shared receivers, links or quotas, sum the simultaneous contributors in `compute(a)` and list the interfaces that consume that total. The displayed utilization is combined offered load divided by sustainable throughput for that resource. Label separate resources when an exchange traverses several bottlenecks.
+- Give each metric its evidence basis. Use `measured` for observations under the stated conditions, `specified` for a documented rating, and `estimated` for a workload assumption or extrapolation. Cite the model assumptions that carry the original measurement, specification or validation plan. Include any applicable limit IDs. The source tables hold the evidence and the calculation link names the metrics returned by the model.
+- Use matching units for demand and service and state the time window for each applicable model scenario (`best`, `expected`, `worst`). Convert values to comparable rates in the model. For a burst, document the assumptions about arrivals and service over that window. For example, a uniform 1,200 frames/s for one second with continuous service at 1,000 frames/s adds 200 frames to an initially empty queue.
+- Include demand even if sustainable throughput is unknown. Omit `capacity` in that case. The reader shows **capacity unknown** and leaves utilization blank. A known zero service rate is a separate model result.
+- Omit `interfaces` until the project declares applicable I-n or X-n records. Omit `limits` when the model has no corresponding requirement limit. Omit the entire `CAPACITY` list for models that do not compare resource throughput.

@@ -8,6 +8,7 @@ import re, sys, os, glob, json
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "flow", "scripts"))
 try: from ids import rx
 except ImportError: sys.exit("ERROR: zkit id registry flow/scripts/ids.py not found: run this script from the zkit plugin, not from a copied skill")
+from record_anchors import ID_HEADERS
 
 d = next((a for a in sys.argv[1:] if not a.startswith("--")), "docs/zkit")
 rdp = lambda n: open(os.path.join(d, n), encoding="utf-8").read() if os.path.exists(os.path.join(d, n)) else None
@@ -17,20 +18,26 @@ out = []
 err = lambda m: out.append("ERROR  " + m)
 warn = lambda m: out.append("WARN   " + m)
 try: import yaml
-except ImportError: yaml = None; warn("PyYAML is not installed: spec files are NOT checked (pip install pyyaml)")
+except ImportError: yaml = None
 try: import jsonschema
-except ImportError: jsonschema = None; warn("jsonschema is not installed: examples are NOT validated against their schemas (pip install jsonschema)")
+except ImportError: jsonschema = None
 
 def tables(t, idpat):
     rows, hdr = [], None
     for l in t.splitlines():
         if not l.startswith("|"): hdr = None; continue
         c = [x.strip() for x in l.strip().strip("|").split("|")]
-        if c and c[0].lower() == "id": hdr = [x.lower() for x in c]; continue
+        if c and c[0].lower() in ID_HEADERS: hdr = [x.lower() for x in c]; continue
         if hdr and re.match(idpat, c[0]): rows.append(dict({h: (c[i] if i < len(c) else "") for i, h in enumerate(hdr)}, _id=c[0]))
     return rows
 col = lambda r, pat: next((v for h, v in r.items() if re.search(pat, h)), "")
 ids_of = lambda s: set(re.findall(rx("FR", "NFR", "C"), s))
+
+def specification_path(row):
+    cell = col(row, r"spec|файл|спецификац").strip()
+    link = re.fullmatch(r"\[[^\]]+\]\((<[^>]+>|[^)]+)\)", cell)
+    return (link.group(1).strip("<>") if link else cell.strip("`")).split("#", 1)[0]
+
 
 reqs = {}
 if req is not None:
@@ -38,7 +45,7 @@ if req is not None:
     for l in req.splitlines():
         if not l.startswith("|"): hdr = None; continue
         c = [x.strip() for x in l.strip().strip("|").split("|")]
-        if c and c[0].lower() == "id": hdr = [x.lower() for x in c]; continue
+        if c and c[0].lower() in ID_HEADERS: hdr = [x.lower() for x in c]; continue
         if hdr and re.match(r"(FR|NFR|C)-\d+$", c[0]):
             i = next((n for n, h in enumerate(hdr) if re.search(r"приоритет|priority", h)), None)
             reqs[c[0]] = c[i] if i is not None and i < len(c) else ""
@@ -52,15 +59,19 @@ for r in rows:
     if r["_id"] in seen: err("duplicate boundary %s" % r["_id"])
     seen.add(r["_id"])
 unver_must = []
+needs_schema_tools = False
 for r in rows:
-    x = r["_id"]; direction = col(r, r"direction|направл").lower(); spec = re.sub(r"[\[\]`]|\(.*?\)", "", col(r, r"spec|файл|спецификац")).strip()
+    x = r["_id"]; direction = col(r, r"direction|направл").lower(); spec = specification_path(r)
     serves = ids_of(col(r, r"serves|обслужив|требован"))
     if not re.search(r"consumed|published|internal|потребл|публик|внутренн", direction): err("%s: direction must be consumed, published or internal (I-n, written by mechanics)" % x)
+    protocol = next((value for header, value in r.items() if re.match(r"^(protocol|протокол)\b", header)), None)
+    if protocol is not None and not protocol.strip(" —–-"):
+        err("%s has an empty Protocol field" % x)
     if not serves: err("%s serves no requirement" % x)
     for s in serves:
         if reqs and s not in reqs: err("%s serves %s, which is not in requirements" % (x, s))
     path = os.path.join(d, spec) if spec else None
-    if not spec or not os.path.exists(path): err("%s: spec file '%s' does not exist" % (x, spec)); continue
+    if not spec or not os.path.isfile(path): err("%s: spec file '%s' does not exist" % (x, spec)); continue
     consumed = bool(re.search(r"consumed|потребл", direction)); internal = bool(re.search(r"internal|внутренн", direction))
     ver = col(r, r"verif|провер")
     if consumed and (not re.search(r"verified|проверен|" + rx("R"), ver, re.I) or re.search(r"unverified|не провер", ver, re.I)):
@@ -71,6 +82,7 @@ for r in rows:
         for need in (r"layout|формат|структур", r"timing|limit|предел|лимит", r"error|ошиб"):
             if not re.search(need, t, re.I): err("%s: card %s lacks a section matching /%s/" % (x, spec, need))
         continue
+    needs_schema_tools = True
     if yaml is None: continue
     try: S = yaml.safe_load(open(path, encoding="utf-8"))
     except Exception as e: err("%s: %s does not parse: %s" % (x, spec, str(e).splitlines()[0])); continue
@@ -127,8 +139,12 @@ for r in rows:
             elif isinstance(o, list):
                 for i, v in enumerate(o): walk(v, path + "/%d" % i)
         walk(S, spec)
+if needs_schema_tools and yaml is None:
+    warn("PyYAML is missing: install pyyaml to validate schema files")
+if needs_schema_tools and jsonschema is None:
+    warn("jsonschema is missing: install jsonschema to validate examples")
 files = {os.path.relpath(f, d).replace(os.sep, "/") for f in glob.glob(os.path.join(d, "contracts", "*")) if os.path.isfile(f)}
-listed = {re.sub(r"[\[\]`]|\(.*?\)", "", col(r, r"spec|файл|спецификац")).strip() for r in rows}
+listed = {specification_path(r) for r in rows}
 for f in sorted(files - listed): warn("%s is not listed in the index" % f)
 
 # ---------- requirements coverage, counts, drift, status, clarity

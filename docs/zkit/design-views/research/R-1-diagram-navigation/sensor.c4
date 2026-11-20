@@ -1,0 +1,34 @@
+specification {
+    element actor
+    element instrument
+    element part
+}
+model {
+    operator = actor 'Operator'
+    meter = instrument 'Temperature instrument' {
+        sampler = part 'B-1 Sampler'
+        controller = part 'B-2 Controller'
+    }
+    operator -> meter 'Registers a sensor'
+    meter.sampler -> meter.controller 'I-1 Sample' {
+        technology 'Sensor telemetry v1 over UART'
+        navigateTo sampleArrival
+    }
+}
+views {
+    view overview {
+        title 'Instrument context'
+        include operator, meter
+    }
+    view instrumentParts of meter {
+        title 'Instrument parts'
+        include *
+    }
+    dynamic view sampleArrival {
+        title 'Retired registration sample'
+        variant sequence
+        meter.sampler -> meter.controller 'I-1 Delayed R7 sample' {
+            notes 'MC-1 rejects retired registration R7. E-2 for R8 stays at sequence 3, 21 °C.'
+        }
+    }
+}

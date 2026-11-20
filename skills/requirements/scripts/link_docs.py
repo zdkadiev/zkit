@@ -11,16 +11,23 @@ Layout:
 Usage:
   link_docs.py <project-dir>          turn mentions of D-n, [R-n] and 'concept §n' into links; rebuild the
                                       back-links under each decision, 'Используется в' in research reports and
-                                      the summary table at the top of decisions.md; then verify every cited id
+                                      the summary table at the top of decisions.md; anchor design records and verify every cited id
                                       against the registry IDS below (exit 1 on errors)
+  link_docs.py <project-dir> --anchors-only
+                                      publish stable design record anchors for browsing without rebuilding project links
   link_docs.py <zkit-root> --migrate --project <name>
                                       move an older layout (flat files, numbered files or folders, one file per
                                       decision) into <zkit-root>/<name>/ and repair the links
 """
+import ast
 import os, re, sys, glob, shutil
+from pathlib import Path
+from urllib.parse import unquote
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "flow", "scripts"))
 try: from ids import IDS, rx   # the id registry: one owner document per prefix
 except ImportError: sys.exit("ERROR: zkit id registry flow/scripts/ids.py not found: run this script from the zkit plugin, not from a copied skill")
+
+from record_anchors import NAME_COLUMNS, add_record_anchors, content_lines, heading_records, record_rows
 
 STAGES = ["concept", "requirements", "resource-math", "ux", "contracts", "data", "architecture", "mechanics", "resilience", "roadmap"]   # later stages: add here and to stage_docs below
 ROW_IDS = rx(*[k for k in IDS if k not in {"D", "R", "P", "Q"}])   # ids defined as table rows
@@ -32,7 +39,12 @@ ENTRY = re.compile(r'(?:<a id="' + rx("D") + r'"></a>\n)?^###\s*D-(\d+)\s*(?:\((
 def entry_text(n, title, status, date, body):
     return '<a id="D-%s"></a>\n### D-%s: %s\n> **Статус:** %s · **Дата:** %s\n\n%s\n' % (n, n, title.strip(), status, date, body.strip())
 
-arg = sys.argv[1] if len(sys.argv) > 1 else "docs/zkit"
+arg = next((a for a in sys.argv[1:] if not a.startswith("--")), "docs/zkit")
+anchors_only = "--anchors-only" in sys.argv
+if anchors_only and any(option in sys.argv for option in ("--migrate", "--fix-ids", "--project")):
+    sys.exit("ERROR: --anchors-only takes only the project directory")
+if anchors_only and not os.path.isdir(arg):
+    sys.exit("ERROR: project directory does not exist: " + arg)
 
 # ---------- migration of older layouts into <root>/<project>/
 if "--migrate" in sys.argv:
@@ -89,31 +101,85 @@ rmp_p = P("roadmap.md")
 ct_p = P("contracts.md")
 dt_p = P("data.md")
 if_p = P("ux.md")
+design_paths = [path for path in (hld_p, ct_p, dt_p, mc_p, rm_p) if os.path.isfile(path)]
+
+def publish_design_anchors():
+    changed = 0
+    for filename in design_paths:
+        path = Path(filename)
+        source = path.read_bytes().decode("utf-8")  # preserve every original line ending
+        anchored = add_record_anchors(filename, source)
+        if anchored != source:
+            path.write_bytes(anchored.encode("utf-8"))
+            changed += 1
+    return changed
+
+if anchors_only:
+    print("anchors: %d design document(s) updated" % publish_design_anchors())
+    sys.exit(0)
+
 rfiles = {re.match(rx("R"), os.path.basename(f)).group(0): f for f in glob.glob(P("research", "R-*.md"))}
 stage_docs = [p for p in (concept_p, req_p, rm_p, if_p, ct_p, dt_p, hld_p, mc_p, rs_p, rmp_p) if os.path.exists(p)]
 
 # ---------- repair links that no longer resolve (after a migration or a rename)
+legacy_roots = [Path(d).resolve()]
+if "--migrate" in sys.argv:
+    legacy_roots.append(Path(root).resolve())
+retired_indexes = {base / name for base in legacy_roots for name in ("index.md", "decisions/index.md")}
 def repair(f):
     t = rd(f)
     def fix(m):
         tgt, frag = m.group(2), m.group(3) or ""
-        if tgt.startswith("http") or os.path.exists(os.path.normpath(os.path.join(os.path.dirname(f), tgt))): return m.group(0)
-        b = os.path.basename(tgt)
-        dm = re.match(r"D-(\d+)\.md$", b)
-        new = (dec_p, "#D-" + dm.group(1)) if dm else None
-        for key, path in (("decisions", dec_p), ("concept", concept_p), ("requirements", req_p)):
-            if new is None and key in tgt: new = (path, frag)
-        rm = re.search(rx("R"), b)
-        if new is None and rm and rm.group(0) in rfiles: new = (rfiles[rm.group(0)], frag)
+        if re.match(r"^(?:[a-z][\w+.-]*:|//)", tgt, re.I):
+            return m.group(0)
+        target = (Path(f).parent / unquote(tgt)).resolve()
+        if target.exists():
+            return m.group(0)
+        if target in retired_indexes:
+            return ""
+        if target.name == "index.md":
+            return m.group(0)
+        # Only names and locations used by a previous zkit layout can be redirected.
+        b = target.name
+        dm = re.fullmatch(r"D-(\d+)\.md", b)
+        new = None
+        if dm and (target.parent in {base / "decisions" for base in legacy_roots} or
+                   (f == dec_p and target.parent in legacy_roots)):
+            new = dec_p, "#D-" + dm[1]
+        for key, names, path in (
+            ("concept", ("concept.md", "01-concept.md"), concept_p),
+            ("requirements", ("requirements.md", "02-requirements.md"), req_p),
+            ("decisions", ("decisions.md",), dec_p),
+        ):
+            stage_folder = target.parent.parent in legacy_roots and re.fullmatch(r"(?:\d{2}-)?" + key, target.parent.name)
+            if (target.parent in legacy_roots and b in names) or (stage_folder and (b in names or re.fullmatch(r"\d{2}-.+\.md", b))):
+                new = path, frag
+        rm = re.fullmatch(r"(" + rx("R") + r")(?:-[^/]*)?\.md", b)
+        if new is None and rm and rm[1] in rfiles and target.parent in {base / "research" for base in legacy_roots}:
+            new = rfiles[rm[1]], frag
         if new is None or not os.path.exists(new[0]): return m.group(0)
         return "%s(%s%s)" % (m.group(1), rel(f, new[0]), new[1])
-    u = re.sub(r"(\[[^\]]*\])\(([^)#\s]+\.md)(#[^)\s]*)?\)", fix, t)
+    lines = t.splitlines(keepends=True)
+    for index, line in content_lines(lines):
+        # Work backwards so dropping a retired link can consume one adjacent separator.
+        for match in reversed(list(re.finditer(r"(\[[^\]]*\])\(([^)#\s]+\.md)(#[^)\s]*)?\)", line))):
+            replacement = fix(match)
+            if replacement == match[0]:
+                continue
+            start, end = match.span()
+            if not replacement:
+                before = re.search(r"[ \t]*·[ \t]*$", line[:start])
+                after = re.match(r"[ \t]*·[ \t]*", line[end:])
+                if before:
+                    start = before.start()
+                elif after:
+                    end += after.end()
+            line = line[:start] + replacement + line[end:]
+        lines[index] = line
+    u = "".join(lines)
     if u != t: wr(f, u)
 for f in glob.glob(P("**", "*.md"), recursive=True):
     repair(f)
-    t = rd(f)                                                   # drop leftovers of the retired index.md files
-    u = re.sub(r"[ \t]*·[ \t]*\[[^\]]*\]\([^)]*index\.md\)|\[[^\]]*\]\([^)]*index\.md\)[ \t]*·[ \t]*|\[[^\]]*\]\([^)]*index\.md\)", "", t)
-    if u != t: wr(f, u)
 
 def d_ids(): return set("D-" + x for x in re.findall(r"^###\s*D-(\d+)", rd(dec_p), re.M)) if os.path.exists(dec_p) else set()
 
@@ -131,6 +197,32 @@ def linkify(path):
         out.append(line)
     open(path, "w", encoding="utf-8").write("\n".join(out))
 for f in stage_docs: linkify(f)
+# Publish links only for declared design constraints and leave code, URLs, existing
+# links, table keys and generated resource-math blocks intact.
+constraint_ids = {rid for _, rid, _ in record_rows(hld_p, rd(hld_p)) if rid.startswith("DC-")} if os.path.isfile(hld_p) else set()
+contract_cards = [str(card) for card in Path(d, "contracts").rglob("*.md") if card.is_file() and not card.is_symlink()]
+if constraint_ids:
+    mention = re.compile(r"(?P<skip>`+[^`]*`+|!?\[[^\]]*\](?:\([^)]*\)|\[[^\]]*\])?|<[^>]*>|(?:https?://|\S*/)[^\s|]+)|(?<![\w/#-])(?P<id>DC-\d+)(?![\w-])")
+    for filename in stage_docs + contract_cards:
+        source = Path(filename).read_bytes().decode("utf-8")
+        lines = source.splitlines(keepends=True)
+        def constraint_link(match):
+            rid = match["id"]
+            if rid not in constraint_ids:
+                return match[0]
+            document = "" if filename == hld_p else rel(filename, hld_p)
+            return f"[{rid}]({document}#{rid})"
+
+        for index, line in content_lines(lines, skip_model=True):
+            if re.match(r"^\s*(?:#|>|\[[^\]]+\]:)", line):
+                continue
+            # The first table cell declares a record or serves as its lookup key.
+            start = line.find("|", line.find("|") + 1) + 1 if line.lstrip().startswith("|") else 0
+            lines[index] = line[:start] + mention.sub(constraint_link, line[start:])
+        result = "".join(lines)
+        if result != source:
+            Path(filename).write_bytes(result.encode("utf-8"))
+publish_design_anchors()
 
 # ---------- 2. mentions: key -> {doc: [labels]}
 def labels(path):
@@ -176,7 +268,7 @@ print("linked: %s — %d stage documents, %d decisions, %d reports" % (os.path.b
 # ---------- 5. verify ids against the registry: cited ids must exist in their owner, validations must be planned
 owner_p = {"requirements.md": req_p, "resource-math.md": rm_p, "ux.md": if_p, "contracts.md": ct_p, "data.md": dt_p,
            "architecture.md": hld_p, "mechanics.md": mc_p, "resilience.md": rs_p, "roadmap.md": rmp_p}
-nofence = lambda t: re.sub(r"(?ms)^```.*?^```", "", t)
+def nofence(text): return "\n".join(line for _, line in content_lines(text.splitlines()))
 docs_all = stage_docs + glob.glob(P("roadmap", "**", "*.md"), recursive=True) + list(rfiles.values()) + ([dec_p] if os.path.exists(dec_p) else [])
 if "--fix-ids" in sys.argv and os.path.exists(req_p) and re.search(r"\*\*К-\d+", rd(req_p)) and not re.search(r"\*\*Q-\d+", rd(req_p)):
     for f in docs_all:   # the old requirements template numbered conflicts with Cyrillic К-n; the registry calls them Q-n
@@ -185,10 +277,21 @@ if "--fix-ids" in sys.argv and os.path.exists(req_p) and re.search(r"\*\*К-\d+"
 texts = {f: nofence(rd(f)) for f in docs_all}
 BULLET = r"^\s*(?:[-*]|\d+\.)\s*\*\*(%s)-(\d+)(?:\.| \()"
 LOCAL = r"^(?:\s*(?:[-*]|\d+\.)\s*\*\*|#{1,6}\s*|\|\s*)(%s)-(\d+)\b"   # where a document defines an item: list label, heading, first table cell
+design_ids = {}
+for path in design_paths:
+    source = rd(path)
+    design_ids[path] = {rid for _, rid, _ in record_rows(path, source)}
+    design_ids[path].update(rid for _, rid, _ in heading_records(path, source))
+
 def owner_defs(pre, path):
     t = texts[path]
     if pre in ("P", "Q"): return set("%s-%s" % m for m in re.findall(BULLET % pre, t, re.M))
-    found = set(re.findall(r"^\|\s*(%s-\d+)\s*\|" % pre, t, re.M)) | set(re.findall(r"^#{1,6}\s*(%s-\d+)\b" % pre, t, re.M))
+    if pre in NAME_COLUMNS:
+        found = {rid for rid in design_ids[path] if rid.partition("-")[0] == pre}
+    else:
+        found = set(re.findall(r"^#{1,6}\s*(%s-\d+)\b" % pre, t, re.M))
+        found.update(re.findall(r"^\|\s*(%s-\d+)\s*\|" % pre, t, re.M))
+    if pre == "DC": return found  # Architecture owns these rows. A model can only consume them.
     stem = os.path.splitext(os.path.basename(path))[0]   # models: resource-math/model.py, resilience/model.py, or a legacy *model*.py in the root
     for py in glob.glob(P(stem, "**", "*.py"), recursive=True) + glob.glob(P("*model*.py")):
         found |= set(re.findall(r"""["'](%s-\d+)["']\s*:""" % pre, rd(py)))
@@ -201,6 +304,30 @@ cited = {}
 for f, t in texts.items():
     for pre, n in re.findall(r"(?<![\w-])(%s)-(\d+)\b" % "|".join(sorted(IDS, key=len, reverse=True)), t):
         cited.setdefault("%s-%s" % (pre, n), set()).add(os.path.relpath(f, d))
+# A boundary spec or executable model can be the only consumer of a constraint.
+# These files cite design IDs; definitions are exclusively in architecture.md.
+for folder, suffixes in (("contracts", {".md", ".yaml", ".yml", ".json"}), ("mechanics", {".py"}), ("resource-math", {".py"})):
+    for item in Path(d, folder).rglob("*"):
+        if item.suffix.lower() not in suffixes or item.is_symlink() or not item.is_file():
+            continue
+        if item.suffix == ".py":
+            # Bound lookups use literal string keys. Template comments and
+            # explanatory prose are examples and must not create dependencies.
+            try:
+                tree = ast.parse(item.read_bytes(), filename=str(item))
+            except (SyntaxError, ValueError):
+                continue  # The owning stage diagnoses an invalid model.
+            references = {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant)
+                          and isinstance(node.value, str) and re.fullmatch(r"DC-\d+", node.value)}
+        else:
+            source = item.read_text(encoding="utf-8")
+            if item.suffix.lower() == ".md":
+                source = nofence(source)
+            elif item.suffix.lower() in {".yaml", ".yml"}:
+                source = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
+            references = set(re.findall(r"(?<![\w-])DC-\d+(?![\w-])", source))
+        for rid in references:
+            cited.setdefault(rid, set()).add(os.path.relpath(item, d))
 # local numbering: a document other than the owner defines its own items with an id-like prefix -> one finding per document and prefix
 local = {}
 for f in stage_docs:

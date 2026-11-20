@@ -18,3 +18,9 @@ def compute(a):
 LIMITS = [   # every numeric requirement / budget the math can test
     {"id": "L-1", "metric": "cost_per_env", "op": "<=", "limit": 2.0, "req": "NFR-3", "label": "environment cost within the per-organization target"},
 ]
+
+# For a throughput comparison, add CAPACITY entries pointing to results of compute().
+# See resource-math-template.md, "Optional capacity comparisons".
+
+# When a formula uses an architecture bound, declare the endpoint and read a["DC-1"] in compute().
+# DESIGN_INPUTS = {"DC-1": {"op": "<=", "unit": "registrations"}}

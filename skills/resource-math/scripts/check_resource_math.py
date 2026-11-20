@@ -6,11 +6,16 @@ Usage: check_resource_math.py <project-dir> [--update]
   (--update rewrites the block), and checks the document against requirements.md and the model. Exit 1 on ERROR.
 Model contract (resource-math/model.py): ASSUMPTIONS = {"A-1": {"label","unit","best","expected","worst"}},
   compute(a: {"A-1": value}) -> {result_name: number}, LIMITS = [{"id":"L-1","metric":result_name,"op":"<=",
-  "limit":number,"req":"NFR-3","label":"..."}], optional UNITS = {result_name: unit}."""
-import re, sys, os, importlib.util
+  "limit":number,"req":"NFR-3","label":"..."}], optional UNITS = {result_name: unit}. Optional CAPACITY
+  entries compare offered load and throughput for selected resources. Optional DESIGN_INPUTS add numeric DC-n
+  endpoints to compute(a) (see references/resource-math-template.md)."""
+import re, sys, os, runpy
+from capacity import capacity_table
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "flow", "scripts"))
 try: from ids import rx
 except ImportError: sys.exit("ERROR: zkit id registry flow/scripts/ids.py not found: run this script from the zkit plugin, not from a copied skill")
+from record_anchors import ID_HEADERS
+from design_inputs import resolve_design_inputs
 
 d = next((a for a in sys.argv[1:] if not a.startswith("--")), "docs/zkit")
 update = "--update" in sys.argv
@@ -24,14 +29,33 @@ out = []
 err = lambda m: out.append("ERROR  " + m)
 warn = lambda m: out.append("WARN   " + m)
 
-spec = importlib.util.spec_from_file_location("resource_model", mp); M = importlib.util.module_from_spec(spec); spec.loader.exec_module(M)
-A, LIM, UNITS = M.ASSUMPTIONS, M.LIMITS, getattr(M, "UNITS", {})
+model = runpy.run_path(mp, run_name="resource_model")
+A, LIM, UNITS = model["ASSUMPTIONS"], model["LIMITS"], model.get("UNITS", {})
 SC = ("best", "expected", "worst")
 fmt = lambda v: "%.4g" % v
 ok = lambda l, v: v <= l["limit"] if l["op"] == "<=" else v >= l["limit"]
+try:
+    fixed_inputs, provisional_inputs, input_rows = resolve_design_inputs(d, model.get("DESIGN_INPUTS", {}), A)
+except ValueError as e:
+    sys.exit(f"ERROR  {os.path.relpath(mp, d)} DESIGN_INPUTS: {e}")
+if input_rows:
+    input_rows.extend(["", f"[Sizing model]({os.path.relpath(mp, d)})"])
+
+
 def run(over=None, base="expected"):
-    a = {k: v[base] for k, v in A.items()}; a.update(over or {}); return M.compute(a)
+    a = {k: v[base] for k, v in A.items()}
+    a.update(over or {})
+    a.update(fixed_inputs)
+    a.update({rid: a[source] for rid, source in provisional_inputs.items()})
+    return model["compute"](a)
 res = {s: run(base=s) for s in SC}
+try:
+    capacity_rows = capacity_table(
+        model.get("CAPACITY", []), res, UNITS, set(A), {limit["id"] for limit in LIM},
+        os.path.relpath(mp, d).replace(os.sep, "/"),
+    )
+except ValueError as e:
+    sys.exit(f"ERROR  resource-math/model.py CAPACITY: {e}")
 for l in LIM:
     if l["metric"] not in res["expected"]: err("limit %s: metric '%s' is not a result of compute()" % (l["id"], l["metric"]))
     if l["op"] not in ("<=", ">="): err("limit %s: op must be <= or >=" % l["id"])
@@ -40,6 +64,7 @@ bad = {s: [l["id"] for l in LIM if l["metric"] in res[s] and not ok(l, res[s][l[
 # ---------- generated block
 rows = ["**Results**", "", "| Result | Unit | Best | Expected | Worst |", "|---|---|---|---|---|"]
 for k in res["expected"]: rows.append("| %s | %s | %s |" % (k, UNITS.get(k, ""), " | ".join(fmt(res[s][k]) for s in SC)))
+rows.extend(input_rows)
 rows += ["", "**Limits**", "", "| ID | Metric | Limit | Best | Expected | Worst |", "|---|---|---|---|---|---|"]
 for l in LIM:
     cells = ["%s %s" % (fmt(res[s][l["metric"]]), "✓" if ok(l, res[s][l["metric"]]) else "✗") for s in SC if l["metric"] in res[s]]
@@ -55,6 +80,7 @@ for s in sens:
     if s[1] not in seen and s[0] > 0: seen.add(s[1]); top.append(s)
 rows += ["", "**Sensitivity** (one assumption at its worst value, others expected; the limit it moves most)", "", "| Assumption | Limit | Change of the metric |", "|---|---|---|"]
 for s in top[:5]: rows.append("| %s | %s | %+.0f%% |" % (s[1], s[2], s[3] * 100))
+rows.extend(capacity_rows)
 block = "\n".join(rows)
 B0, B1 = "<!-- model:begin -->", "<!-- model:end -->"
 m = re.search(re.escape(B0) + r"(.*?)" + re.escape(B1), doc, re.S)
@@ -69,7 +95,7 @@ def tables(t, idpat):
     for l in t.splitlines():
         if not l.startswith("|"): hdr = None; continue
         c = [x.strip() for x in l.strip().strip("|").split("|")]
-        if c and c[0].lower() == "id": hdr = [x.lower() for x in c]; continue
+        if c and c[0].lower() in ID_HEADERS: hdr = [x.lower() for x in c]; continue
         if hdr and re.match(idpat, c[0]): rows.append(dict({h: (c[i] if i < len(c) else "") for i, h in enumerate(hdr)}, _id=c[0]))
     return rows
 col = lambda r, pat: next((v for h, v in r.items() if re.search(pat, h)), "")
@@ -87,7 +113,7 @@ if req is not None:
     for l in req.splitlines():
         if not l.startswith("|"): hdr = None; continue
         c = [x.strip() for x in l.strip().strip("|").split("|")]
-        if c and c[0].lower() == "id": hdr = [x.lower() for x in c]; continue
+        if c and c[0].lower() in ID_HEADERS: hdr = [x.lower() for x in c]; continue
         if hdr and re.match(r"(FR|NFR|C)-\d+$", c[0]):
             i = next((n for n, h in enumerate(hdr) if re.search(r"приоритет|priority", h)), None)
             reqs[c[0]] = (c[i] if i is not None and i < len(c) else "", l)

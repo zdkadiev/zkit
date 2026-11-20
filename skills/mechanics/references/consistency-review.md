@@ -12,4 +12,6 @@ Give this to a fresh reviewer sub-agent with the paths of the project's `concept
 8. CONTRADICTION: the mechanics contradict a requirement, constraint, contract, architecture decision or non-superseded decision, or rely on a superseded one.
 9. DESIGN_LEAK: production code, failure-handling policy (resilience), tasks or estimates (roadmap), or changes to the architecture that were not recorded as a decision.
 
+From the input interface follow its effect to the actual MC-n, then to the owner, entity aspect, affected data and memory regions. Compare the transition table's state names and effects with the conditions in the declared vocabulary. For transient procedures identify what starts and ends an instance. Walk an event after destruction: for sensor sample acceptance, registration removal ends the machine and a frame carrying that retired ID is discarded before sequence comparison. Check concurrency with removal and explain any dead-end or missing-failure-event warnings from the instance boundary. Where there is a state diagram, compare its transitions to the table.
+
 Strict but fair; skip nitpicks; «none» for an empty category. The reviewer's table is evidence, not a verdict: the main agent decides each finding.

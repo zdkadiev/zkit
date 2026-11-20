@@ -8,6 +8,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 try: from ids import rx
 except ImportError: sys.exit("ERROR: zkit id registry flow/scripts/ids.py not found: run this script from the zkit plugin, not from a copied skill")
 
+from design_constraints import parse_design_constraints
+from design_inventory import COLUMNS, cells, ids, plain
+from record_anchors import ID_HEADERS, content_lines
+
 d = sys.argv[1] if len(sys.argv) > 1 else "docs/zkit"
 def rdp(n): p = os.path.join(d, n); return open(p, encoding="utf-8").read() if os.path.exists(p) else None
 hld, req, con, dec = rdp("architecture.md"), rdp("requirements.md"), rdp("concept.md"), rdp("decisions.md")
@@ -18,6 +22,8 @@ if hld is None: sys.exit("ERROR: no architecture.md in %s (pass the project fold
 out = []
 def err(m): out.append("ERROR  " + m)
 def warn(m): out.append("WARN   " + m)
+_, constraint_errors = parse_design_constraints(hld)
+for message in constraint_errors: err(message)
 if legacy: warn("high-level-design.md is the older name of this document: rename it to architecture.md")
 
 def sections(t):
@@ -36,15 +42,28 @@ def expand(text):
         if int(b) >= int(lo): ids |= set("%s-%d" % (k, i) for i in range(int(lo), int(b) + 1))
     return ids
 
-def tables(t, idpat):
-    """rows of every table whose first column matches idpat: list of (dict by lowercase header, cells)"""
-    rows, hdr = [], None
-    for l in t.splitlines():
-        if not l.startswith("|"): hdr = None; continue
-        c = [x.strip() for x in l.strip().strip("|").split("|")]
-        if c and c[0].lower() == "id": hdr = [x.lower() for x in c]; continue
-        if hdr and re.match(idpat, c[0]): rows.append(({h: (c[i] if i < len(c) else "") for i, h in enumerate(hdr)}, c))
-    return rows
+def table_groups(text, idpat):
+    """Keep rows grouped by their ID table so format changes can be validated per header."""
+    groups = []
+    header = None
+    previous = -1
+    for index, line in content_lines(text.splitlines()):
+        if index != previous + 1:
+            header = None
+        previous = index
+        if not line.lstrip().startswith("|"):
+            header = None
+            continue
+        values = cells(line)
+        if values[0].casefold() in ID_HEADERS:
+            header = [h.casefold() for h in values]
+            rows = []
+            groups.append((header, rows))
+        elif header and re.fullmatch(idpat, values[0]):
+            row = {h: values[i] if i < len(values) else "" for i, h in enumerate(header)}
+            rows.append((row, values))
+    return groups
+
 def pick(row, pat):
     for h, v in row[0].items():
         if re.search(pat, h): return v
@@ -65,30 +84,74 @@ else:
     warn("no requirements.md: traceability cannot be checked against requirements")
 
 # ---------- parts, interfaces, scenarios
-B = {r[1][0]: r for r in tables(sec("части", "parts", "building"), rx("B") + r"$")}
-I = {r[1][0]: r for r in tables(sec("интерфейс", "interface"), rx("I") + r"$")}
-Sc = {r[1][0]: r for r in tables(sec("сценари", "scenario"), rx("S") + r"$")}
-for name, kind, rr in (("part", "B", B), ("interface", "I", I), ("scenario", "S", Sc)):
-    allrows = tables(sec({"B": "части|parts|building", "I": "интерфейс|interface", "S": "сценари|scenario"}[kind]), r"%s-\d+$" % kind)
-    seen = set()
-    for r in allrows:
-        if r[1][0] in seen: err("duplicate %s ID %s" % (name, r[1][0]))
-        seen.add(r[1][0])
+def index_rows(groups, name):
+    index = {}
+    for _, rows in groups:
+        for row in rows:
+            record_id = row[1][0]
+            if record_id in index:
+                err("duplicate %s ID %s" % (name, record_id))
+            index[record_id] = row
+    return index
+
+interface_section = sec("интерфейс", "interface")
+interface_tables = table_groups(interface_section, rx("I"))
+B = index_rows(table_groups(sec("части", "parts", "building"), rx("B")), "part")
+I = index_rows(interface_tables, "interface")
+Sc = index_rows(table_groups(sec("сценари", "scenario"), rx("S")), "scenario")
 if not B: err("no parts table (B-n rows)")
 
 for bid, r in B.items():
     if not (pick(r, r"ответственн|responsib") or "").strip(): err("%s has no responsibility" % bid)
     serves = pick(r, r"обслужив|покрыва|serves|требован") or ""
-    if not re.search(r"(FR|NFR|C)-\d+", serves): err("%s serves no requirement (orphan part: justify in the document or cut)" % bid)
+    if not re.search(rx("FR", "NFR", "C"), serves): err("%s serves no requirement (orphan part: justify in the document or cut)" % bid)
     for x in expand(serves):
         if reqs and x.split("-")[0] in ("FR", "NFR", "C") and x not in reqs: err("%s serves %s, which is not in requirements" % (bid, x))
+
+ENDPOINTS = r"^(?:" + COLUMNS["endpoints"] + ")"
+PROTOCOL = r"^(?:" + COLUMNS["protocol"] + ")"
+ENTITY_EFFECTS = r"^(?:" + COLUMNS["effects"] + ")"
+EMPTY_CELLS = {"", "-", "–", "—"}
+
+def check_interface_format(headers, rows):
+    fields = (("Protocol", PROTOCOL), ("Entity effects", ENTITY_EFFECTS))
+    missing = [name for name, pattern in fields if not any(re.match(pattern, h) for h in headers)]
+    label = "interface table starting at " + rows[0][1][0] if rows else "empty interface table"
+    if len(missing) == len(fields):
+        if rows or any(re.match(ENDPOINTS, h) for h in headers):
+            warn("legacy %s: add Protocol and Entity effects" % label)
+        return
+    for name in missing:
+        err("%s: missing %s column" % (label, name))
+
+    for row in rows:
+        iid = row[1][0]
+        for name, pattern in fields:
+            value = pick(row, pattern)
+            if value is not None and plain(value) in EMPTY_CELLS:
+                err("%s: %s is empty" % (iid, name))
+        effects = plain(pick(row, ENTITY_EFFECTS) or "")
+        if effects in EMPTY_CELLS or effects.strip("*_. ").casefold() in {"none", "нет", "отсутствуют"}:
+            continue
+        participants = set(ids(effects, "B"))
+        endpoints = set(ids(pick(row, ENDPOINTS) or "", "B"))
+        # Free-text operations can name domain verbs in either authoring language.
+        words = re.sub(r"\b" + rx("B", "E", "MC") + r"\b", "", effects)
+        if not participants or not ids(effects, "E") or not re.search(r"[^\W\d_]", words):
+            err("%s: Entity effects must name a participating B-n, an operation and an E-n, or say 'none'" % iid)
+        for part in sorted(participants - endpoints):
+            err("%s: Entity effects names %s outside the interface endpoints" % (iid, part))
+
+for headers, rows in interface_tables:
+    check_interface_format(headers, rows)
+
 for iid, r in I.items():
-    ends = re.findall(rx("B"), pick(r, r"от|from") or "")
+    ends = re.findall(r"\b" + rx("B") + r"\b", plain(pick(r, ENDPOINTS) or ""))
     if len(ends) < 2: err("%s: 'from → to' must name two parts (B-n)" % iid)
     for e in ends:
         if e not in B: err("%s refers to %s, which does not exist" % (iid, e))
     serves = pick(r, r"обслужив|покрыва|serves|требован") or ""
-    if not re.search(r"(FR|NFR|C)-\d+", serves): warn("%s serves no requirement" % iid)
+    if not re.search(rx("FR", "NFR", "C"), serves): warn("%s serves no requirement" % iid)
     for x in expand(serves):
         if reqs and x.split("-")[0] in ("FR", "NFR", "C") and x not in reqs: err("%s serves %s, which is not in requirements" % (iid, x))
 for sid, r in Sc.items():
@@ -222,7 +285,21 @@ if req is not None:
 # ---------- details that belong to later stages
 tech_re = r"(?i)\b(postgres\w*|mysql|sqlite|mongodb|redis|kafka|rabbitmq|nats|python|golang|typescript|node\.?js|rust|java|kubernetes|k8s|docker|graphql|grpc|protobuf|terraform|aws|gcp|azure)\b"
 skip = ("стек", "stack", "technology", "ключевые решения", "key decisions", "ограничен", "constraint", "источники", "sources", "отложено", "deferred", "риск", "risk")
-body = "\n".join(v for k, v in S.items() if not any(s in k for s in skip))
+# A protocol name is required here, so keep that specific cell out of the technology-choice warning.
+def without_protocol_cell(match):
+    row = I.get(match.group(1))
+    if row and pick(row, PROTOCOL) is not None:
+        return " ".join(value for name, value in row[0].items() if not re.search(PROTOCOL, name))
+    return match.group()
+
+tech_sections = []
+for title, content in S.items():
+    if any(term in title for term in skip):
+        continue
+    if content == interface_section:
+        content = re.sub(r"(?m)^\|\s*(" + rx("I") + r")\s*\|.*$", without_protocol_cell, content)
+    tech_sections.append(content)
+body = "\n".join(tech_sections)
 body = re.sub(r"```.*?```", "", body, flags=re.S)
 tech = sorted(set(t.lower() for t in re.findall(tech_re, body)))
 if tech: warn("technology words outside decisions and constraints (contracts or mechanics?): " + ", ".join(tech))

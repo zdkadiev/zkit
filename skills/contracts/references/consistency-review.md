@@ -9,7 +9,7 @@ Give this to a fresh reviewer sub-agent with the paths of `concept.md`, `require
 5. ERROR_MODEL: missing or inconsistent errors, retries, timeouts, idempotency, ordering or delivery guarantees; a mutating operation whose retry is unsafe.
 6. SECURITY_TRUST: who may call is unclear; credentials or personal data cross a boundary without a stated protection; a trust assumption on the counterparty that the requirements forbid.
 7. DESIGN_LEAK: internal parts, storage formats or product choices inside a contract; a counterparty product chosen without a decision.
-8. EXAMPLE_DRIFT: examples, schemas, index and prose disagree (a field in the example not in the schema, an operation in the index not in the file, a number in prose different from the spec).
+8. EXAMPLE_DRIFT: examples, schemas, index and prose disagree (a field in the example not in the schema, an operation in the index not in the file, a number in prose different from the spec). Follow each Spec path and check that the named protocol, version and counterparty match the exchange.
 9. STALE: contracts relying on a superseded decision or an old version of a requirement or of resource-math.
 
 Strict but fair; skip nitpicks; «none» for an empty category. The reviewer's table is evidence, not a verdict: the main agent decides each finding.

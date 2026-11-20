@@ -7,6 +7,9 @@ import re, sys, os, glob, importlib.util
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "flow", "scripts"))
 try: from ids import rx
 except ImportError: sys.exit("ERROR: zkit id registry flow/scripts/ids.py not found: run this script from the zkit plugin, not from a copied skill")
+from record_anchors import ID_HEADERS
+
+ROW_HEADERS = ID_HEADERS | {"state", "состояние"}
 
 d = next((a for a in sys.argv[1:] if not a.startswith("--")), "docs/zkit")
 rdp = lambda n: open(os.path.join(d, n), encoding="utf-8").read() if os.path.exists(os.path.join(d, n)) else None
@@ -27,7 +30,7 @@ def rows_of(t, first):
     for l in t.splitlines():
         if not l.startswith("|"): hdr = None; continue
         c = [x.strip() for x in l.strip().strip("|").split("|")]
-        if c and re.match(r"(id|state|состояние)$", c[0].lower()): hdr = [x.lower() for x in c]; continue
+        if c and c[0].casefold() in ROW_HEADERS: hdr = [x.lower() for x in c]; continue
         if hdr and not re.match(r"[-: ]+$", c[0]) and re.match(first, c[0]): rows.append(dict({h: (c[i] if i < len(c) else "") for i, h in enumerate(hdr)}, _id=c[0]))
     return rows
 col = lambda r, pat: next((v for h, v in r.items() if re.search(pat, h)), "")

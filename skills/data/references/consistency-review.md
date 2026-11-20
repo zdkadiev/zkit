@@ -12,4 +12,6 @@ Give this to a fresh reviewer sub-agent with the paths of `concept.md`, `require
 8. DESIGN_LEAK: table/index/DDL detail, owning parts (B-n), product or engine choice without a requirement or decision.
 9. DIAGRAM_DRIFT: the ER diagram, the catalog and the lifecycle table disagree; a memory region without a limit or a size that does not add up to the RAM limit.
 
+Trace a creation, an update and the end of an instance. In the sensor example, a higher sequence updates the existing reading in °C. Removing its registration ends both lifetimes. A subsequent registration has a fresh ID and its sequence may restart. Check that the logical fields, ER cardinality and copy lifetimes explain what a delayed frame still carries. For each modeled state aspect, verify its source, the condition for every value and the link to its governing mechanism once defined. A derived value should follow from the stated facts after every update. For a referenced memory region, follow its M-n to the contents, size, allocation and exhaustion rule.
+
 Strict but fair; skip nitpicks; «none» for an empty category. The reviewer's table is evidence, not a verdict: the main agent decides each finding.
